@@ -2,10 +2,8 @@ services:
   - type: web
     name: verifid
     env: php
-    region: singapore          # Pilih region terdekat dari Indonesia
-    plan: free                 # ✅ Free tier
-    
-    # --- BUILD CONFIGURATION ---
+    region: singapore
+    plan: free
     buildCommand: |
       composer install --no-dev --optimize-autoloader
       npm ci
@@ -14,73 +12,41 @@ services:
       php artisan route:cache
       php artisan view:cache
       php artisan storage:link
-    
-    # --- START COMMAND (UNTUK LARAVEL 12) ---
     startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
-    
-    # --- ENVIRONMENT VARIABLES ---
     envVars:
       - key: APP_ENV
         value: production
-      
       - key: APP_DEBUG
         value: "false"
-      
       - key: APP_KEY
-        generateValue: true    # ✅ Render akan generate otomatis
-      
+        generateValue: true
       - key: APP_URL
-        sync: false            # Akan diisi otomatis oleh Render
-      
-      # --- DATABASE (PostgreSQL) ---
+        sync: false
       - key: DB_CONNECTION
         value: pgsql
-      
       - key: DB_HOST
-        fromDatabase:
-          name: verif-membership-db
-          property: host
-      
+        value: ${DB_HOST}
       - key: DB_PORT
-        fromDatabase:
-          name: verif-membership-db
-          property: port
-      
+        value: ${DB_PORT}
       - key: DB_DATABASE
-        fromDatabase:
-          name: verif-membership-db
-          property: database
-      
+        value: ${DB_DATABASE}
       - key: DB_USERNAME
-        fromDatabase:
-          name: verif-membership-db
-          property: user
-      
+        value: ${DB_USERNAME}
       - key: DB_PASSWORD
-        fromDatabase:
-          name: verif-membership-db
-          property: password
-      
-      # --- PENTING UNTUK RENDER FREE TIER ---
+        value: ${DB_PASSWORD}
       - key: LOG_CHANNEL
         value: errorlog
-      
       - key: SESSION_DRIVER
         value: database
-      
       - key: FILESYSTEM_DISK
         value: public
-      
       - key: QUEUE_CONNECTION
         value: database
-      
       - key: SANCTUM_STATEFUL_DOMAINS
         value: "*.onrender.com"
-      
       - key: SESSION_DOMAIN
         value: ".onrender.com"
 
-# --- DATABASE (PostgreSQL Free Tier 10GB) ---
 databases:
   - name: verif-membership-db
     databaseName: verif_membership
