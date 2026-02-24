@@ -2,8 +2,8 @@ services:
   - type: web
     name: verifid
     env: php
-    region: singapore
-    plan: free
+    region: singapore          # Pilih region terdekat dari Indonesia
+    plan: free                 # ✅ Free tier
     
     # --- BUILD CONFIGURATION ---
     buildCommand: |
@@ -15,7 +15,7 @@ services:
       php artisan view:cache
       php artisan storage:link
     
-    # --- START COMMAND (DISESUAIKAN UNTUK LARAVEL 12) ---
+    # --- START COMMAND (UNTUK LARAVEL 12) ---
     startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
     
     # --- ENVIRONMENT VARIABLES ---
@@ -27,12 +27,12 @@ services:
         value: "false"
       
       - key: APP_KEY
-        generateValue: true
+        generateValue: true    # ✅ Render akan generate otomatis
       
       - key: APP_URL
-        sync: false
+        sync: false            # Akan diisi otomatis oleh Render
       
-      # --- DATABASE (DISESUAIKAN DENGAN NAMA DATABASE ANDA) ---
+      # --- DATABASE (PostgreSQL) ---
       - key: DB_CONNECTION
         value: pgsql
       
@@ -73,8 +73,14 @@ services:
       
       - key: QUEUE_CONNECTION
         value: database
+      
+      - key: SANCTUM_STATEFUL_DOMAINS
+        value: "*.onrender.com"
+      
+      - key: SESSION_DOMAIN
+        value: ".onrender.com"
 
-# --- DATABASE (DISESUAIKAN DENGAN NAMA DATABASE ANDA) ---
+# --- DATABASE (PostgreSQL Free Tier 10GB) ---
 databases:
   - name: verif-membership-db
     databaseName: verif_membership
