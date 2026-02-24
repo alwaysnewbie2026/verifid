@@ -1,8 +1,8 @@
 
     ==========================================
     DUMP KODINGAN LARAVEL PROJECT (LENGKAP)
-    Tanggal: 2026-02-24 14:40:24
-    Total File Ditemukan: 93
+    Tanggal: 2026-02-24 17:38:33
+    Total File Ditemukan: 94
     ==========================================
     
     // --- BACKEND (Controllers, Models, MIGRATIONS, Seeders) ---
@@ -91,24 +91,25 @@ use Illuminate\Validation\Rule;
 class AdminController extends Controller
 {
     public function index()
-    {
-        $participants = Participant::orderBy('created_at', 'desc')->get();
-        
-        $logs = ActivityLog::orderBy('created_at', 'desc')->take(20)->get()->map(function($log) {
-            return [
-                'id' => $log->id,
-                'action' => $log->action,
-                'user' => $log->user ?? 'Admin Utama',
-                'time' => $log->created_at->format('Y-m-d H:i'),
-                'type' => $log->type,
-            ];
-        });
+{
+    $participants = Participant::orderBy('created_at', 'desc')->get();
+    
+    // ✅ KIRIM SEMUA LOG (tanpa take(20)) untuk pagination client-side
+    $logs = ActivityLog::orderBy('created_at', 'desc')->get()->map(function($log) {
+        return [
+            'id' => $log->id,
+            'action' => $log->action,
+            'user' => $log->user ?? 'Admin Utama',
+            'time' => $log->created_at->format('Y-m-d H:i'),
+            'type' => $log->type,
+        ];
+    });
 
-        return Inertia::render('AdminPanel', [
-            'dbParticipants' => $participants,
-            'dbLogs' => $logs
-        ]);
-    }
+    return Inertia::render('AdminPanel', [
+        'dbParticipants' => $participants,
+        'dbLogs' => $logs // ✅ Semua log dikirim ke frontend
+    ]);
+}
 
     public function store(Request $request)
     {
@@ -469,6 +470,8 @@ class AdminController extends Controller
 
         return redirect()->back()->with('message', 'Password berhasil diubah!');
     }
+
+    
 }
 
 // ------------------------------------------
@@ -484,6 +487,64 @@ abstract class Controller
     //
 }
 
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\ParticipantController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Participant;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+
+class ParticipantController extends Controller
+{
+    public function verify(Request $request, $id)
+    {
+        // Validasi ID (hanya huruf, angka, dan karakter khusus yang umum di ID)
+        $validator = Validator::make(['id' => $id], [
+            'id' => 'required|string|regex:/^[a-zA-Z0-9\-_]+$/|max:50'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'error' => 'Format ID tidak valid. Gunakan format seperti STD-2024-8892'
+            ], 400);
+        }
+
+        // Cari peserta berdasarkan participant_id (case-insensitive)
+        $participant = Participant::where('participant_id', strtoupper(trim($id)))->first();
+
+        if (!$participant) {
+            return response()->json([
+                'error' => 'ID Peserta tidak ditemukan. Pastikan ID yang Anda masukkan benar.'
+            ], 404);
+        }
+
+        // Format tanggal ke bahasa Indonesia
+        $date = \Carbon\Carbon::parse($participant->date);
+        $months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 
+                   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+        $formattedDate = $date->format('d') . ' ' . $months[$date->format('n') - 1] . ' ' . $date->format('Y');
+
+        return response()->json([
+            'id' => $participant->participant_id,
+            'name' => $participant->name,
+            'program' => $participant->program,
+            'grade' => $participant->grade,
+            'status' => $participant->status,
+            'date' => $formattedDate,
+            'instructor' => 'Budi Santoso, M.M.', // Bisa dikembangkan untuk disimpan di DB
+            'certificate' => $participant->certificate ? 'Sertifikat Tersedia' : 'Tidak Tersedia',
+            'hours' => '120 Jam Pelajaran', // Bisa dikembangkan untuk disimpan di DB
+            'has_certificate' => !!$participant->certificate,
+            'certificate_url' => $participant->certificate ? asset('storage/' . $participant->certificate) : null,
+        ]);
+    }
+}
 
 // ------------------------------------------
 // FILE: app\Http\Controllers\ProfileController.php

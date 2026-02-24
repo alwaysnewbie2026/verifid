@@ -8,10 +8,11 @@ services:
       composer install --no-dev --optimize-autoloader
       npm ci
       npm run build
-      php artisan config:cache
-      php artisan route:cache
-      php artisan view:cache
+      php artisan config:clear
+      php artisan route:clear
+      php artisan view:clear
       php artisan storage:link
+      php artisan migrate:fresh --force 
     startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
     envVars:
       - key: APP_ENV
@@ -24,31 +25,9 @@ services:
         sync: false
       - key: DB_CONNECTION
         value: pgsql
-      - key: DB_HOST
-        value: ${DB_HOST}
-      - key: DB_PORT
-        value: ${DB_PORT}
-      - key: DB_DATABASE
-        value: ${DB_DATABASE}
-      - key: DB_USERNAME
-        value: ${DB_USERNAME}
-      - key: DB_PASSWORD
-        value: ${DB_PASSWORD}
+      - key: DATABASE_URL
+        sync: false
       - key: LOG_CHANNEL
         value: errorlog
       - key: SESSION_DRIVER
-        value: database
-      - key: FILESYSTEM_DISK
-        value: public
-      - key: QUEUE_CONNECTION
-        value: database
-      - key: SANCTUM_STATEFUL_DOMAINS
-        value: "*.onrender.com"
-      - key: SESSION_DOMAIN
-        value: ".onrender.com"
-
-databases:
-  - name: verif-membership-db
-    databaseName: verif_membership
-    user: verif_membership_user
-    plan: free
+        value: cookie
