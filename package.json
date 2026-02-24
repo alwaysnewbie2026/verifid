@@ -1,0 +1,60 @@
+{
+  "$schema": "https://www.schemastore.org/package.json",
+  "name": "verifid",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sistem Verifikasi Sertifikat Digital dengan Laravel + React",
+  "keywords": [
+    "laravel",
+    "react",
+    "inertia",
+    "verifikasi",
+    "sertifikat"
+  ],
+  "author": "VerifID Team",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:production": "vite build --mode production",
+    "preview": "vite preview",
+    "lint": "eslint resources/js --ext .js,.jsx",
+    "format": "prettier --write resources/js",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "framer-motion": "^12.34.3",
+    "lucide-react": "^0.575.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^3.7.0"
+  },
+  "devDependencies": {
+    "@headlessui/react": "^2.2.0",
+    "@inertiajs/react": "^2.0.4",
+    "@tailwindcss/forms": "^0.5.9",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react": "^7.37.1",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "laravel-vite-plugin": "^2.0.4",
+    "postcss": "^8.4.47",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^3.4.14",
+    "vite": "^7.0.7"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "browserslist": [
+    ">0.2%",
+    "not dead",
+    "not op_mini all"
+  ]
+}

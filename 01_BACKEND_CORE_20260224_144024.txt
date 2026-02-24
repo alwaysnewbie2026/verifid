@@ -1,0 +1,1634 @@
+
+    ==========================================
+    DUMP KODINGAN LARAVEL PROJECT (LENGKAP)
+    Tanggal: 2026-02-24 14:40:24
+    Total File Ditemukan: 93
+    ==========================================
+    
+    // --- BACKEND (Controllers, Models, MIGRATIONS, Seeders) ---
+
+
+// ------------------------------------------
+// FILE: app\Exports\ParticipantsExport.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Exports;
+
+use App\Models\Participant;
+use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithMapping;
+use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithStyles;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+
+class ParticipantsExport implements FromCollection, WithHeadings, WithMapping, ShouldAutoSize, WithStyles
+{
+    public function collection()
+    {
+        return Participant::orderBy('created_at', 'desc')->get();
+    }
+
+    public function headings(): array
+    {
+        return [
+            'No',
+            'Nama Lengkap',
+            'ID Peserta',
+            'Program',
+            'Nilai',
+            'Status',
+            'Tanggal'
+        ];
+    }
+
+    public function map($participant): array
+    {
+        static $i = 0;
+        $i++;
+        return [
+            $i,
+            $participant->name,
+            $participant->participant_id,
+            $participant->program,
+            $participant->grade,
+            $participant->status,
+            $participant->date,
+        ];
+    }
+
+    public function styles(Worksheet $sheet)
+    {
+        return [
+            1    => ['font' => ['bold' => true]], // Header dibold
+        ];
+    }
+}
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\AdminController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use App\Models\Participant;
+use App\Models\ActivityLog;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Maatwebsite\Excel\Facades\Excel;
+use App\Exports\ParticipantsExport;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
+
+class AdminController extends Controller
+{
+    public function index()
+    {
+        $participants = Participant::orderBy('created_at', 'desc')->get();
+        
+        $logs = ActivityLog::orderBy('created_at', 'desc')->take(20)->get()->map(function($log) {
+            return [
+                'id' => $log->id,
+                'action' => $log->action,
+                'user' => $log->user ?? 'Admin Utama',
+                'time' => $log->created_at->format('Y-m-d H:i'),
+                'type' => $log->type,
+            ];
+        });
+
+        return Inertia::render('AdminPanel', [
+            'dbParticipants' => $participants,
+            'dbLogs' => $logs
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'participant_id' => 'required|string|unique:participants',
+            'program' => 'required|string',
+            'grade' => 'required|string',
+            'status' => 'required|string',
+            'date' => 'required|date|date_format:Y-m-d|before_or_equal:today',
+            'certificate' => 'nullable|file|mimes:pdf|max:5120',
+        ]);
+
+        if ($request->hasFile('certificate')) {
+            $path = $request->file('certificate')->store('certificates', 'public');
+            $validated['certificate'] = $path;
+        }
+
+        $validated['user'] = Auth::user()->name ?? 'Admin Utama';
+        Participant::create($validated);
+
+        ActivityLog::create([
+            'action' => "Tambah Peserta: {$validated['name']}",
+            'type' => 'create',
+            'user' => $validated['user']
+        ]);
+
+        return redirect()->back()->with('message', 'Data berhasil ditambahkan');
+    }
+
+    public function update(Request $request, $id)
+    {
+        $participant = Participant::findOrFail($id);
+        
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'participant_id' => 'required|string|unique:participants,participant_id,'.$id,
+            'program' => 'required|string',
+            'grade' => 'required|string',
+            'status' => 'required|string',
+            'date' => 'required|date',
+            'certificate' => 'nullable|file|mimes:pdf|max:5120',
+        ]);
+
+        if ($request->hasFile('certificate')) {
+            // Hapus file lama jika ada
+            if ($participant->certificate) {
+                Storage::disk('public')->delete($participant->certificate);
+            }
+            // Simpan file baru
+            $path = $request->file('certificate')->store('certificates', 'public');
+            $validated['certificate'] = $path;
+        } else {
+            // ✅ KUNCI PERBAIKAN: Buang 'certificate' dari array validasi 
+            // jika tidak ada file baru yang diunggah, agar data lama tidak tertimpa null.
+            unset($validated['certificate']);
+        }
+
+        $validated['user'] = Auth::user()->name ?? 'Admin Utama';
+        $participant->update($validated);
+
+        ActivityLog::create([
+            'action' => "Update Data: {$validated['name']}",
+            'type' => 'update',
+            'user' => $validated['user']
+        ]);
+
+        return redirect()->back()->with('message', 'Data berhasil diupdate');
+    }
+
+    public function destroy($id)
+    {
+        $participant = Participant::findOrFail($id);
+        
+        if ($participant->certificate) {
+            Storage::disk('public')->delete($participant->certificate);
+        }
+        
+        $name = $participant->name;
+        $participant->delete();
+
+        ActivityLog::create([
+            'action' => "Hapus Peserta: {$name}",
+            'type' => 'delete',
+            'user' => Auth::user()->name ?? 'Admin Utama'
+        ]);
+
+        return redirect()->back()->with('message', 'Data berhasil dihapus');
+    }
+
+    public function downloadTemplate()
+    {
+        $headers = [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="Template_Data_Peserta.csv"',
+        ];
+
+        $callback = function () {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, ['Nama Lengkap', 'ID Peserta', 'Program', 'Nilai', 'Status', 'Tanggal (YYYY-MM-DD)']);
+            fputcsv($file, ['Sarah Amanda', 'STD-2024-9001', 'Digital Marketing', 'A', 'Lulus', '2024-05-20']);
+            fputcsv($file, ['Budi Santoso', 'STD-2024-9002', 'Fullstack Dev', 'B+', 'Proses', '2024-06-15']);
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
+
+    public function importCsv(Request $request)
+    {
+        try {
+            $request->validate([
+                'file' => 'required|mimes:csv,txt|max:5120',
+            ]);
+
+            $file = $request->file('file');
+            $handle = fopen($file->path(), 'r');
+
+            if (!$handle) {
+                throw new \Exception('Gagal membuka file CSV');
+            }
+
+            fgetcsv($handle); // Skip header
+            $insertData = [];
+            $now = now();
+            $count = 0;
+            $duplicateCount = 0;
+            $errors = [];
+
+            // Ambil ID dari DB
+            $existingIds = Participant::pluck('participant_id')->toArray();
+            
+            // ✅ TAMBAHAN: Array untuk melacak ID di dalam file CSV itu sendiri
+            $processedIdsInCsv = []; 
+
+            while (($row = fgetcsv($handle, 1000, ',')) !== false) {
+                if (!isset($row[1]) || empty(trim($row[1]))) continue;
+                
+                $participantId = trim($row[1]);
+
+                // ✅ PERBAIKAN LOGIKA: Cek di DB ATAU cek di baris CSV yang sudah terbaca sebelumnya
+                if (in_array($participantId, $existingIds) || in_array($participantId, $processedIdsInCsv)) {
+                    $duplicateCount++;
+                    continue; 
+                }
+
+                $dateValue = $row[5] ?? $now->format('Y-m-d');
+                $formattedDate = $this->parseDate($dateValue);
+
+                if (!$formattedDate) {
+                    $errors[] = "Baris ID {$participantId}: Format tanggal tidak valid";
+                    continue;
+                }
+
+                $insertData[] = [
+                    'name' => trim($row[0] ?? '-'),
+                    'participant_id' => $participantId,
+                    'program' => trim($row[2] ?? '-'),
+                    'grade' => trim($row[3] ?? '-'),
+                    'status' => trim($row[4] ?? 'Lulus'),
+                    'date' => $formattedDate,
+                ];
+                
+                // ✅ TAMBAHAN: Catat ID ini agar baris bawahnya yang kembar ditolak
+                $processedIdsInCsv[] = $participantId; 
+                $count++;
+            }
+
+            fclose($handle);
+
+            if (empty($insertData) && $duplicateCount > 0) {
+                return redirect()->back()->with('error', "Semua data ({$duplicateCount} baris) sudah ada di database atau duplikat di file. Tidak ada data baru.");
+            } elseif (empty($insertData)) {
+                return redirect()->back()->with('error', 'File CSV kosong atau format salah!');
+            }
+
+            session()->put('import_all_data', $insertData);
+
+            session()->flash('import_preview', [
+                'total' => $count,
+                'duplicates' => $duplicateCount,
+                'preview' => array_slice($insertData, 0, 5),
+                'errors' => $errors,
+            ]);
+
+            return redirect()->back();
+
+        } catch (\Exception $e) {
+            \Log::error('Import CSV Error: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error: '.$e->getMessage());
+        }
+    }
+
+    public function confirmImport(Request $request)
+    {
+        try {
+            // ✅ Ambil raw data yang kita simpan tadi
+            $importData = session('import_all_data');
+            
+            if (empty($importData)) {
+                return redirect()->back()->with('error', 'Data import kedaluwarsa. Silakan upload ulang CSV.');
+            }
+
+            $now = now();
+            $chunks = array_chunk($importData, 500);
+            $totalInserted = 0;
+
+            foreach ($chunks as $chunk) {
+                $chunkWithTimestamps = array_map(function($item) use ($now) {
+                    return array_merge($item, [
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+                }, $chunk);
+                
+                Participant::insertOrIgnore($chunkWithTimestamps);
+                $totalInserted += count($chunk);
+            }
+
+            // ✅ Clear session setelah berhasil
+            session()->forget('import_all_data');
+            session()->forget('import_preview');
+
+            ActivityLog::create([
+                'action' => 'Import '.$totalInserted.' Peserta via CSV',
+                'type' => 'create',
+                'user' => Auth::user()->name ?? 'Admin Utama'
+            ]);
+
+            return redirect()->back()->with('message', $totalInserted.' Data berhasil diimport!');
+
+        } catch (\Exception $e) {
+            \Log::error('Confirm Import Error: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error: '.$e->getMessage());
+        }
+    }
+
+    private function parseDate($dateString)
+    {
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateString)) {
+            return $dateString;
+        }
+        if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $dateString, $matches)) {
+            return "{$matches[3]}-" . str_pad($matches[1], 2, '0', STR_PAD_LEFT) . "-" . str_pad($matches[2], 2, '0', STR_PAD_LEFT);
+        }
+        $timestamp = strtotime($dateString);
+        if ($timestamp) {
+            return date('Y-m-d', $timestamp);
+        }
+        return false;
+    }
+
+    public function bulkDelete(Request $request)
+    {
+        try {
+            $request->validate([
+                'ids' => 'required|array|min:1',
+                'ids.*' => 'string'
+            ]);
+            
+            $ids = array_filter(array_map('trim', $request->ids));
+
+            if (empty($ids)) {
+                return redirect()->back()->with('error', 'Tidak ada ID yang valid untuk dihapus!');
+            }
+
+            // ✅ UBAH: Gunakan 'participant_id', karena user menginput STD-XXXX
+            $deletedCount = Participant::whereIn('participant_id', $ids)->delete();
+
+            if ($deletedCount > 0) {
+                ActivityLog::create([
+                    'action' => "Hapus Massal {$deletedCount} Peserta",
+                    'type' => 'delete',
+                    'user' => Auth::user()->name ?? 'Admin Utama'
+                ]);
+                return redirect()->back()->with('message', "{$deletedCount} Data berhasil dihapus secara massal");
+            }
+
+            // Jika tidak ada yang terhapus, kembalikan error
+            return redirect()->back()->with('error', 'Tidak ada data yang cocok dengan ID tersebut!');
+            
+        } catch (\Exception $e) {
+            \Log::error('Bulk Delete Error: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error: '.$e->getMessage());
+        }
+    }
+
+    public function exportExcel()
+    {
+        ActivityLog::create([
+            'action' => 'Export Data Peserta ke Excel',
+            'type' => 'read',
+            'user' => Auth::user()->name ?? 'Admin Utama'
+        ]);
+
+        return Excel::download(new ParticipantsExport, 'Data_Peserta_'.date('Ymd_His').'.xlsx');
+    }
+
+    public function exportPdf()
+    {
+        $participants = Participant::orderBy('created_at', 'desc')->get();
+        
+        ActivityLog::create([
+            'action' => 'Export Data Peserta ke PDF',
+            'type' => 'read',
+            'user' => Auth::user()->name ?? 'Admin Utama'
+        ]);
+
+        $pdf = Pdf::loadView('exports.participants-pdf', compact('participants'));
+        
+        // return $pdf->stream(); // Jika ingin preview di browser
+        return $pdf->download('Data_Peserta_'.date('Ymd_His').'.pdf'); 
+    }
+
+    public function updateProfile(Request $request)
+    {
+        $user = Auth::user();
+        
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => [
+                'required', 'string', 'email', 'max:255', 
+                Rule::unique('users')->ignore($user->id) // Hindari error unik jika email tidak diganti
+            ],
+        ]);
+
+        $user->update([
+            'name' => $request->name,
+            'email' => $request->email,
+        ]);
+
+        ActivityLog::create([
+            'action' => 'Memperbarui Profil Admin',
+            'type' => 'update',
+            'user' => $user->name
+        ]);
+
+        return redirect()->back()->with('message', 'Profil berhasil diperbarui!');
+    }
+
+    public function updatePassword(Request $request)
+    {
+        $request->validate([
+            'current_password' => 'required|current_password', // Bawaan Laravel untuk cek password lama
+            'password' => 'required|string|min:8|confirmed', // Harus ada input 'password_confirmation'
+        ]);
+
+        $user = Auth::user();
+        $user->update([
+            'password' => Hash::make($request->password),
+        ]);
+
+        ActivityLog::create([
+            'action' => 'Mengubah Password Admin',
+            'type' => 'auth',
+            'user' => $user->name
+        ]);
+
+        return redirect()->back()->with('message', 'Password berhasil diubah!');
+    }
+}
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Controller.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers;
+
+abstract class Controller
+{
+    //
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\ProfileController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\ProfileUpdateRequest;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Redirect;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class ProfileController extends Controller
+{
+    /**
+     * Display the user's profile form.
+     */
+    public function edit(Request $request): Response
+    {
+        return Inertia::render('Profile/Edit', [
+            'mustVerifyEmail' => $request->user() instanceof MustVerifyEmail,
+            'status' => session('status'),
+        ]);
+    }
+
+    /**
+     * Update the user's profile information.
+     */
+    public function update(ProfileUpdateRequest $request): RedirectResponse
+    {
+        $request->user()->fill($request->validated());
+
+        if ($request->user()->isDirty('email')) {
+            $request->user()->email_verified_at = null;
+        }
+
+        $request->user()->save();
+
+        return Redirect::route('profile.edit');
+    }
+
+    /**
+     * Delete the user's account.
+     */
+    public function destroy(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'password' => ['required', 'current_password'],
+        ]);
+
+        $user = $request->user();
+
+        Auth::logout();
+
+        $user->delete();
+
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return Redirect::to('/');
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\AuthenticatedSessionController.php
+// ------------------------------------------
+
+<?php
+namespace App\Http\Controllers\Auth;
+use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\LoginRequest;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class AuthenticatedSessionController extends Controller
+{
+    public function create(): Response
+    {
+        return Inertia::render('Auth/Login', [
+            'canResetPassword' => Route::has('password.request'),
+            'status' => session('status'),
+        ]);
+    }
+
+    public function store(LoginRequest $request): RedirectResponse
+    {
+        $request->authenticate();
+        $request->session()->regenerate();
+
+        // ✅ UBAH dari 'dashboard' ke 'admin.index'
+        return redirect()->intended(route('admin.index', absolute: false));
+    }
+
+    public function destroy(Request $request): RedirectResponse
+    {
+        Auth::guard('web')->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+        return redirect('/');
+    }
+}
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\ConfirmablePasswordController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class ConfirmablePasswordController extends Controller
+{
+    /**
+     * Show the confirm password view.
+     */
+    public function show(): Response
+    {
+        return Inertia::render('Auth/ConfirmPassword');
+    }
+
+    /**
+     * Confirm the user's password.
+     */
+    public function store(Request $request): RedirectResponse
+    {
+        if (! Auth::guard('web')->validate([
+            'email' => $request->user()->email,
+            'password' => $request->password,
+        ])) {
+            throw ValidationException::withMessages([
+                'password' => __('auth.password'),
+            ]);
+        }
+
+        $request->session()->put('auth.password_confirmed_at', time());
+
+        return redirect()->intended(route('dashboard', absolute: false));
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\EmailVerificationNotificationController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+
+class EmailVerificationNotificationController extends Controller
+{
+    /**
+     * Send a new email verification notification.
+     */
+    public function store(Request $request): RedirectResponse
+    {
+        if ($request->user()->hasVerifiedEmail()) {
+            return redirect()->intended(route('dashboard', absolute: false));
+        }
+
+        $request->user()->sendEmailVerificationNotification();
+
+        return back()->with('status', 'verification-link-sent');
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\EmailVerificationPromptController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class EmailVerificationPromptController extends Controller
+{
+    /**
+     * Display the email verification prompt.
+     */
+    public function __invoke(Request $request): RedirectResponse|Response
+    {
+        return $request->user()->hasVerifiedEmail()
+                    ? redirect()->intended(route('dashboard', absolute: false))
+                    : Inertia::render('Auth/VerifyEmail', ['status' => session('status')]);
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\NewPasswordController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rules;
+use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class NewPasswordController extends Controller
+{
+    /**
+     * Display the password reset view.
+     */
+    public function create(Request $request): Response
+    {
+        return Inertia::render('Auth/ResetPassword', [
+            'email' => $request->email,
+            'token' => $request->route('token'),
+        ]);
+    }
+
+    /**
+     * Handle an incoming new password request.
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public function store(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'token' => 'required',
+            'email' => 'required|email',
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+        ]);
+
+        // Here we will attempt to reset the user's password. If it is successful we
+        // will update the password on an actual user model and persist it to the
+        // database. Otherwise we will parse the error and return the response.
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function ($user) use ($request) {
+                $user->forceFill([
+                    'password' => Hash::make($request->password),
+                    'remember_token' => Str::random(60),
+                ])->save();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        // If the password was successfully reset, we will redirect the user back to
+        // the application's home authenticated view. If there is an error we can
+        // redirect them back to where they came from with their error message.
+        if ($status == Password::PASSWORD_RESET) {
+            return redirect()->route('login')->with('status', __($status));
+        }
+
+        throw ValidationException::withMessages([
+            'email' => [trans($status)],
+        ]);
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\PasswordController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rules\Password;
+
+class PasswordController extends Controller
+{
+    /**
+     * Update the user's password.
+     */
+    public function update(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'current_password'],
+            'password' => ['required', Password::defaults(), 'confirmed'],
+        ]);
+
+        $request->user()->update([
+            'password' => Hash::make($validated['password']),
+        ]);
+
+        return back();
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\PasswordResetLinkController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Validation\ValidationException;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class PasswordResetLinkController extends Controller
+{
+    /**
+     * Display the password reset link request view.
+     */
+    public function create(): Response
+    {
+        return Inertia::render('Auth/ForgotPassword', [
+            'status' => session('status'),
+        ]);
+    }
+
+    /**
+     * Handle an incoming password reset link request.
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public function store(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        // We will send the password reset link to this user. Once we have attempted
+        // to send the link, we will examine the response then see the message we
+        // need to show to the user. Finally, we'll send out a proper response.
+        $status = Password::sendResetLink(
+            $request->only('email')
+        );
+
+        if ($status == Password::RESET_LINK_SENT) {
+            return back()->with('status', __($status));
+        }
+
+        throw ValidationException::withMessages([
+            'email' => [trans($status)],
+        ]);
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\RegisteredUserController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use Illuminate\Auth\Events\Registered;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rules;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class RegisteredUserController extends Controller
+{
+    /**
+     * Display the registration view.
+     */
+    public function create(): Response
+    {
+        return Inertia::render('Auth/Register');
+    }
+
+    /**
+     * Handle an incoming registration request.
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public function store(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|lowercase|email|max:255|unique:'.User::class,
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+        ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+        ]);
+
+        event(new Registered($user));
+
+        Auth::login($user);
+
+        return redirect(route('dashboard', absolute: false));
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Controllers\Auth\VerifyEmailController.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Auth\Events\Verified;
+use Illuminate\Foundation\Auth\EmailVerificationRequest;
+use Illuminate\Http\RedirectResponse;
+
+class VerifyEmailController extends Controller
+{
+    /**
+     * Mark the authenticated user's email address as verified.
+     */
+    public function __invoke(EmailVerificationRequest $request): RedirectResponse
+    {
+        if ($request->user()->hasVerifiedEmail()) {
+            return redirect()->intended(route('dashboard', absolute: false).'?verified=1');
+        }
+
+        if ($request->user()->markEmailAsVerified()) {
+            event(new Verified($request->user()));
+        }
+
+        return redirect()->intended(route('dashboard', absolute: false).'?verified=1');
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Middleware\HandleInertiaRequests.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Middleware;
+
+use Illuminate\Http\Request;
+use Inertia\Middleware;
+
+class HandleInertiaRequests extends Middleware
+{
+    /**
+     * The root template that is loaded on the first page visit.
+     *
+     * @var string
+     */
+    protected $rootView = 'app';
+
+    /**
+     * Determine the current asset version.
+     */
+    public function version(Request $request): ?string
+    {
+        return parent::version($request);
+    }
+
+    /**
+     * Define the props that are shared by default.
+     *
+     * @return array<string, mixed>
+     */
+    public function share(Request $request): array
+    {
+        return [
+            ...parent::share($request),
+            'auth' => [
+                'user' => $request->user(),
+            ],
+            // ✅ TAMBAHKAN FLASH MESSAGES AGAR BISA DIAKSES DI FRONTEND
+            'flash' => [
+                'message' => fn () => $request->session()->get('message'),
+                'error' => fn () => $request->session()->get('error'),
+                'import_preview' => fn () => $request->session()->get('import_preview'),
+            ],
+        ];
+    }
+}
+
+// ------------------------------------------
+// FILE: app\Http\Requests\ProfileUpdateRequest.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Requests;
+
+use App\Models\User;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class ProfileUpdateRequest extends FormRequest
+{
+    /**
+     * Get the validation rules that apply to the request.
+     *
+     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     */
+    public function rules(): array
+    {
+        return [
+            'name' => ['required', 'string', 'max:255'],
+            'email' => [
+                'required',
+                'string',
+                'lowercase',
+                'email',
+                'max:255',
+                Rule::unique(User::class)->ignore($this->user()->id),
+            ],
+        ];
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Http\Requests\Auth\LoginRequest.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Http\Requests\Auth;
+
+use Illuminate\Auth\Events\Lockout;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+
+class LoginRequest extends FormRequest
+{
+    /**
+     * Determine if the user is authorized to make this request.
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Get the validation rules that apply to the request.
+     *
+     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     */
+    public function rules(): array
+    {
+        return [
+            'email' => ['required', 'string', 'email'],
+            'password' => ['required', 'string'],
+        ];
+    }
+
+    /**
+     * Attempt to authenticate the request's credentials.
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public function authenticate(): void
+    {
+        $this->ensureIsNotRateLimited();
+
+        if (! Auth::attempt($this->only('email', 'password'), $this->boolean('remember'))) {
+            RateLimiter::hit($this->throttleKey());
+
+            throw ValidationException::withMessages([
+                'email' => trans('auth.failed'),
+            ]);
+        }
+
+        RateLimiter::clear($this->throttleKey());
+    }
+
+    /**
+     * Ensure the login request is not rate limited.
+     *
+     * @throws \Illuminate\Validation\ValidationException
+     */
+    public function ensureIsNotRateLimited(): void
+    {
+        if (! RateLimiter::tooManyAttempts($this->throttleKey(), 5)) {
+            return;
+        }
+
+        event(new Lockout($this));
+
+        $seconds = RateLimiter::availableIn($this->throttleKey());
+
+        throw ValidationException::withMessages([
+            'email' => trans('auth.throttle', [
+                'seconds' => $seconds,
+                'minutes' => ceil($seconds / 60),
+            ]),
+        ]);
+    }
+
+    /**
+     * Get the rate limiting throttle key for the request.
+     */
+    public function throttleKey(): string
+    {
+        return Str::transliterate(Str::lower($this->string('email')).'|'.$this->ip());
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Models\ActivityLog.php
+// ------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+
+class ActivityLog extends Model
+{
+    protected $fillable = ['action', 'user', 'type'];
+}
+
+// ------------------------------------------
+// FILE: app\Models\Participant.php
+// ------------------------------------------
+
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+
+class Participant extends Model
+{
+    protected $fillable = ['name', 'participant_id', 'program', 'grade', 'status', 'date', 'certificate'];
+}
+
+// ------------------------------------------
+// FILE: app\Models\User.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Models;
+
+// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Foundation\Auth\User as Authenticatable;
+use Illuminate\Notifications\Notifiable;
+
+class User extends Authenticatable
+{
+    /** @use HasFactory<\Database\Factories\UserFactory> */
+    use HasFactory, Notifiable;
+
+    /**
+     * The attributes that are mass assignable.
+     *
+     * @var list<string>
+     */
+    protected $fillable = [
+        'name',
+        'email',
+        'password',
+    ];
+
+    /**
+     * The attributes that should be hidden for serialization.
+     *
+     * @var list<string>
+     */
+    protected $hidden = [
+        'password',
+        'remember_token',
+    ];
+
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+        ];
+    }
+}
+
+
+// ------------------------------------------
+// FILE: app\Providers\AppServiceProvider.php
+// ------------------------------------------
+
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Support\Facades\Vite;
+use Illuminate\Support\ServiceProvider;
+
+class AppServiceProvider extends ServiceProvider
+{
+    /**
+     * Register any application services.
+     */
+    public function register(): void
+    {
+        //
+    }
+
+    /**
+     * Bootstrap any application services.
+     */
+    public function boot(): void
+    {
+        Vite::prefetch(concurrency: 3);
+    }
+}
+
+
+// ------------------------------------------
+// FILE: database\migrations\0001_01_01_000000_create_users_table.php
+// ------------------------------------------
+
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('email')->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('password');
+            $table->rememberToken();
+            $table->timestamps();
+        });
+
+        Schema::create('password_reset_tokens', function (Blueprint $table) {
+            $table->string('email')->primary();
+            $table->string('token');
+            $table->timestamp('created_at')->nullable();
+        });
+
+        Schema::create('sessions', function (Blueprint $table) {
+            $table->string('id')->primary();
+            $table->foreignId('user_id')->nullable()->index();
+            $table->string('ip_address', 45)->nullable();
+            $table->text('user_agent')->nullable();
+            $table->longText('payload');
+            $table->integer('last_activity')->index();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('users');
+        Schema::dropIfExists('password_reset_tokens');
+        Schema::dropIfExists('sessions');
+    }
+};
+
+
+// ------------------------------------------
+// FILE: database\migrations\0001_01_01_000001_create_cache_table.php
+// ------------------------------------------
+
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('cache', function (Blueprint $table) {
+            $table->string('key')->primary();
+            $table->mediumText('value');
+            $table->integer('expiration')->index();
+        });
+
+        Schema::create('cache_locks', function (Blueprint $table) {
+            $table->string('key')->primary();
+            $table->string('owner');
+            $table->integer('expiration')->index();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('cache');
+        Schema::dropIfExists('cache_locks');
+    }
+};
+
+
+// ------------------------------------------
+// FILE: database\migrations\0001_01_01_000002_create_jobs_table.php
+// ------------------------------------------
+
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('jobs', function (Blueprint $table) {
+            $table->id();
+            $table->string('queue')->index();
+            $table->longText('payload');
+            $table->unsignedTinyInteger('attempts');
+            $table->unsignedInteger('reserved_at')->nullable();
+            $table->unsignedInteger('available_at');
+            $table->unsignedInteger('created_at');
+        });
+
+        Schema::create('job_batches', function (Blueprint $table) {
+            $table->string('id')->primary();
+            $table->string('name');
+            $table->integer('total_jobs');
+            $table->integer('pending_jobs');
+            $table->integer('failed_jobs');
+            $table->longText('failed_job_ids');
+            $table->mediumText('options')->nullable();
+            $table->integer('cancelled_at')->nullable();
+            $table->integer('created_at');
+            $table->integer('finished_at')->nullable();
+        });
+
+        Schema::create('failed_jobs', function (Blueprint $table) {
+            $table->id();
+            $table->string('uuid')->unique();
+            $table->text('connection');
+            $table->text('queue');
+            $table->longText('payload');
+            $table->longText('exception');
+            $table->timestamp('failed_at')->useCurrent();
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('jobs');
+        Schema::dropIfExists('job_batches');
+        Schema::dropIfExists('failed_jobs');
+    }
+};
+
+
+// ------------------------------------------
+// FILE: database\migrations\2026_02_24_025520_create_activity_logs_table.php
+// ------------------------------------------
+
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+{
+    Schema::create('activity_logs', function (Blueprint $table) {
+        $table->id();
+        $table->string('action');
+        $table->string('user')->default('Admin Utama');
+        $table->string('type'); // auth, create, update, delete, export
+        $table->timestamps();
+    });
+}
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('activity_logs');
+    }
+};
+
+
+// ------------------------------------------
+// FILE: database\migrations\2026_02_24_025520_create_participants_table.php
+// ------------------------------------------
+
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+{
+    Schema::create('participants', function (Blueprint $table) {
+        $table->id();
+        $table->string('name');
+        $table->string('participant_id')->unique();
+        $table->string('program');
+        $table->string('grade');
+        $table->string('status')->default('Lulus');
+        $table->date('date');
+        $table->string('certificate')->nullable(); // Untuk path file PDF
+        $table->timestamps();
+    });
+}
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('participants');
+    }
+};
+
+
+// ------------------------------------------
+// FILE: database\seeders\DatabaseSeeder.php
+// ------------------------------------------
+
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\User;
+use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use Illuminate\Database\Seeder;
+
+class DatabaseSeeder extends Seeder
+{
+    use WithoutModelEvents;
+
+    /**
+     * Seed the application's database.
+     */
+    public function run(): void
+    {
+        // User::factory(10)->create();
+
+        User::factory()->create([
+            'name' => 'Test User',
+            'email' => 'test@example.com',
+        ]);
+    }
+}
+
+
+// ------------------------------------------
+// FILE: database\factories\UserFactory.php
+// ------------------------------------------
+
+<?php
+
+namespace Database\Factories;
+
+use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+
+/**
+ * @extends \Illuminate\Database\Eloquent\Factories\Factory<\App\Models\User>
+ */
+class UserFactory extends Factory
+{
+    /**
+     * The current password being used by the factory.
+     */
+    protected static ?string $password;
+
+    /**
+     * Define the model's default state.
+     *
+     * @return array<string, mixed>
+     */
+    public function definition(): array
+    {
+        return [
+            'name' => fake()->name(),
+            'email' => fake()->unique()->safeEmail(),
+            'email_verified_at' => now(),
+            'password' => static::$password ??= Hash::make('password'),
+            'remember_token' => Str::random(10),
+        ];
+    }
+
+    /**
+     * Indicate that the model's email address should be unverified.
+     */
+    public function unverified(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'email_verified_at' => null,
+        ]);
+    }
+}
+
+
+// ------------------------------------------
+// FILE: .env.example
+// ------------------------------------------
+
+APP_NAME=Laravel
+APP_ENV=local
+APP_KEY=
+APP_DEBUG=true
+APP_URL=http://localhost
+
+APP_LOCALE=en
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=en_US
+
+APP_MAINTENANCE_DRIVER=file
+# APP_MAINTENANCE_STORE=database
+
+# PHP_CLI_SERVER_WORKERS=4
+
+BCRYPT_ROUNDS=12
+
+LOG_CHANNEL=stack
+LOG_STACK=single
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=debug
+
+DB_CONNECTION=sqlite
+# DB_HOST=127.0.0.1
+# DB_PORT=3306
+# DB_DATABASE=laravel
+# DB_USERNAME=root
+# DB_PASSWORD=
+
+SESSION_DRIVER=database
+SESSION_LIFETIME=120
+SESSION_ENCRYPT=false
+SESSION_PATH=/
+SESSION_DOMAIN=null
+
+BROADCAST_CONNECTION=log
+FILESYSTEM_DISK=local
+QUEUE_CONNECTION=database
+
+CACHE_STORE=database
+# CACHE_PREFIX=
+
+MEMCACHED_HOST=127.0.0.1
+
+REDIS_CLIENT=phpredis
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+
+MAIL_MAILER=log
+MAIL_SCHEME=null
+MAIL_HOST=127.0.0.1
+MAIL_PORT=2525
+MAIL_USERNAME=null
+MAIL_PASSWORD=null
+MAIL_FROM_ADDRESS="hello@example.com"
+MAIL_FROM_NAME="${APP_NAME}"
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=
+AWS_USE_PATH_STYLE_ENDPOINT=false
+
+VITE_APP_NAME="${APP_NAME}"

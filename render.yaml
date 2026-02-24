@@ -1,0 +1,82 @@
+services:
+  - type: web
+    name: verifid
+    env: php
+    region: singapore
+    plan: free
+    
+    # --- BUILD CONFIGURATION ---
+    buildCommand: |
+      composer install --no-dev --optimize-autoloader
+      npm ci
+      npm run build
+      php artisan config:cache
+      php artisan route:cache
+      php artisan view:cache
+      php artisan storage:link
+    
+    # --- START COMMAND (DISESUAIKAN UNTUK LARAVEL 12) ---
+    startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
+    
+    # --- ENVIRONMENT VARIABLES ---
+    envVars:
+      - key: APP_ENV
+        value: production
+      
+      - key: APP_DEBUG
+        value: "false"
+      
+      - key: APP_KEY
+        generateValue: true
+      
+      - key: APP_URL
+        sync: false
+      
+      # --- DATABASE (DISESUAIKAN DENGAN NAMA DATABASE ANDA) ---
+      - key: DB_CONNECTION
+        value: pgsql
+      
+      - key: DB_HOST
+        fromDatabase:
+          name: verif-membership-db
+          property: host
+      
+      - key: DB_PORT
+        fromDatabase:
+          name: verif-membership-db
+          property: port
+      
+      - key: DB_DATABASE
+        fromDatabase:
+          name: verif-membership-db
+          property: database
+      
+      - key: DB_USERNAME
+        fromDatabase:
+          name: verif-membership-db
+          property: user
+      
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: verif-membership-db
+          property: password
+      
+      # --- PENTING UNTUK RENDER FREE TIER ---
+      - key: LOG_CHANNEL
+        value: errorlog
+      
+      - key: SESSION_DRIVER
+        value: database
+      
+      - key: FILESYSTEM_DISK
+        value: public
+      
+      - key: QUEUE_CONNECTION
+        value: database
+
+# --- DATABASE (DISESUAIKAN DENGAN NAMA DATABASE ANDA) ---
+databases:
+  - name: verif-membership-db
+    databaseName: verif_membership
+    user: verif_membership_user
+    plan: free
